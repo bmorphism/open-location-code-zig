@@ -1,6 +1,29 @@
+//! Open Location Code (Plus Codes) for Zig
+//!
+//! A pure Zig implementation of Google's Open Location Code geocoding system.
+//! Plus Codes provide a simple way to identify any location on Earth.
+//!
+//! ## Example
+//! ```zig
+//! const olc = @import("open_location_code");
+//!
+//! var buffer: [20]u8 = undefined;
+//! const len = try olc.encode(37.7749, -122.4194, 10, &buffer);
+//! const code = buffer[0..len]; // "849VQHFJ+X6"
+//!
+//! const area = try olc.decode("849VQHFJ+X6");
+//! const lat = area.center_latitude(); // ~37.7749
+//! const lng = area.center_longitude(); // ~-122.4194
+//! ```
+
 const std = @import("std");
 
-/// Character set for Open Location Code encoding (base 20)
+// =============================================================================
+// Constants
+// =============================================================================
+
+/// The 20 valid characters for Plus Code encoding.
+/// Excludes easily confused characters: A, I, L, O.
 pub const CODE_ALPHABET: []const u8 = "23456789CFGHJMPQRVWX";
 
 /// Separator character appearing after 8th digit
@@ -30,7 +53,11 @@ const GRID_COLS: f64 = 4.0;
 /// Pair code length (first 10 characters use pair encoding)
 const PAIR_CODE_LENGTH: u8 = 10;
 
-/// Represents a decoded Plus Code area
+// =============================================================================
+// Types
+// =============================================================================
+
+/// Represents a decoded Plus Code area with bounding box coordinates.
 pub const CodeArea = struct {
     south_latitude: f64,
     west_longitude: f64,
@@ -47,14 +74,28 @@ pub const CodeArea = struct {
     }
 };
 
-/// Errors that can occur
+/// Errors that can occur during encoding/decoding.
 pub const OlcError = error{
+    /// The code is not a valid Plus Code format.
     InvalidCode,
+    /// The requested code length is invalid.
     InvalidLength,
+    /// The provided buffer is too small for the result.
     BufferTooSmall,
 };
 
-/// Encode latitude/longitude to Plus Code
+// =============================================================================
+// Public API
+// =============================================================================
+
+/// Encodes a latitude/longitude pair to a Plus Code.
+///
+/// - `lat`: Latitude in degrees (-90 to 90). Values outside range are clamped.
+/// - `lng`: Longitude in degrees. Values are normalized to (-180, 180].
+/// - `code_length`: Desired code length (2-15). Default is 10 if < 2.
+/// - `buffer`: Output buffer. Must be at least `code_length + 1` bytes.
+///
+/// Returns the number of bytes written to the buffer.
 pub fn encode(lat: f64, lng: f64, code_length: u8, buffer: []u8) OlcError!usize {
     var length = code_length;
     if (length < 2) length = DEFAULT_CODE_LENGTH;
@@ -159,13 +200,15 @@ pub fn encode(lat: f64, lng: f64, code_length: u8, buffer: []u8) OlcError!usize 
     return idx;
 }
 
-/// Encode with default length
+/// Encodes a latitude/longitude pair to a Plus Code with default length (10).
+/// Returns a slice of the buffer containing the code.
 pub fn encode_default(lat: f64, lng: f64, buffer: []u8) OlcError![]u8 {
     const len = try encode(lat, lng, DEFAULT_CODE_LENGTH, buffer);
     return buffer[0..len];
 }
 
-/// Check if code is valid
+/// Returns true if the code is a valid Plus Code (full or short).
+/// Checks format, character set, separator position, and padding rules.
 pub fn is_valid(code: []const u8) bool {
     if (code.len < 2) return false;
 
@@ -201,7 +244,8 @@ pub fn is_valid(code: []const u8) bool {
     return true;
 }
 
-/// Check if full code
+/// Returns true if the code is a full (not shortened) Plus Code.
+/// Full codes have the separator at position 8.
 pub fn is_full(code: []const u8) bool {
     if (!is_valid(code)) return false;
     for (code, 0..) |c, i| {
@@ -210,7 +254,8 @@ pub fn is_full(code: []const u8) bool {
     return false;
 }
 
-/// Check if short code
+/// Returns true if the code is a shortened Plus Code.
+/// Short codes have the separator before position 8.
 pub fn is_short(code: []const u8) bool {
     if (!is_valid(code)) return false;
     for (code, 0..) |c, i| {
@@ -219,7 +264,8 @@ pub fn is_short(code: []const u8) bool {
     return true;
 }
 
-/// Decode Plus Code to area
+/// Decodes a full Plus Code to a CodeArea with bounding box coordinates.
+/// Returns error.InvalidCode if the code is not a valid full code.
 pub fn decode(code: []const u8) OlcError!CodeArea {
     if (!is_full(code)) return OlcError.InvalidCode;
 
@@ -271,7 +317,10 @@ pub fn decode(code: []const u8) OlcError!CodeArea {
     };
 }
 
-// Helpers
+// =============================================================================
+// Internal Helpers
+// =============================================================================
+
 fn normalizeL(lng: f64) f64 {
     var r = lng;
     while (r < -180.0) r += 360.0;
