@@ -6,7 +6,7 @@ A pure Zig implementation of [Google's Open Location Code](https://github.com/go
 
 - **Pure Zig** - No dependencies, works with Zig 0.15+
 - **Zero allocations** - All encoding uses caller-provided buffers
-- **Fully tested** - 130+ tests including cross-validation with Python/Go reference implementations
+- **Fully tested** - 30 tests including table-driven reference cities, edge cases, and fuzz tests
 - **Complete API** - encode, decode, validate, full/short code detection
 
 ## Installation
