@@ -300,124 +300,299 @@ fn charVal(c: u8) u8 {
     return 0;
 }
 
+// =============================================================================
 // Tests
-test "encode San Francisco" {
+// =============================================================================
+
+const TestCase = struct {
+    lat: f64,
+    lng: f64,
+    expected: []const u8,
+    name: []const u8,
+};
+
+// Reference test cases cross-validated with Python/Go implementations
+const encoding_tests = [_]TestCase{
+    .{ .lat = 0.0, .lng = 0.0, .expected = "6FG22222+22", .name = "Origin" },
+    .{ .lat = 37.7749, .lng = -122.4194, .expected = "849VQHFJ+X6", .name = "San Francisco" },
+    .{ .lat = 51.5074, .lng = -0.1278, .expected = "9C3XGV4C+XV", .name = "London" },
+    .{ .lat = 35.6762, .lng = 139.6503, .expected = "8Q7XMMG2+F4", .name = "Tokyo" },
+    .{ .lat = -33.8688, .lng = 151.2093, .expected = "4RRH46J5+FP", .name = "Sydney" },
+    .{ .lat = 55.7558, .lng = 37.6173, .expected = "9G7VQJ48+8W", .name = "Moscow" },
+    .{ .lat = 19.4326, .lng = -99.1332, .expected = "76F2CVM8+2P", .name = "Mexico City" },
+    .{ .lat = -22.9068, .lng = -43.1729, .expected = "589R3RVG+7R", .name = "Rio de Janeiro" },
+    .{ .lat = 48.8566, .lng = 2.3522, .expected = "8FW4V942+JV", .name = "Paris" },
+    .{ .lat = 40.7128, .lng = -74.0060, .expected = "87G7PX7V+4H", .name = "New York" },
+    .{ .lat = 1.3521, .lng = 103.8198, .expected = "6PH59R29+RW", .name = "Singapore" },
+    .{ .lat = 25.2048, .lng = 55.2708, .expected = "7HQQ673C+W8", .name = "Dubai" },
+};
+
+test "encode: reference cities" {
     var buf: [20]u8 = undefined;
-    const len = try encode(37.7749, -122.4194, 10, &buf);
-    try std.testing.expectEqualStrings("849VQHFJ+X6", buf[0..len]);
+    for (encoding_tests) |tc| {
+        const len = try encode(tc.lat, tc.lng, 10, &buf);
+        try std.testing.expectEqualStrings(tc.expected, buf[0..len]);
+    }
 }
 
-test "encode London" {
+test "decode: roundtrip all reference cities" {
     var buf: [20]u8 = undefined;
-    const len = try encode(51.5074, -0.1278, 10, &buf);
-    try std.testing.expectEqualStrings("9C3XGV4C+XV", buf[0..len]);
+    for (encoding_tests) |tc| {
+        const len = try encode(tc.lat, tc.lng, 10, &buf);
+        const area = try decode(buf[0..len]);
+        const lat_diff = @abs(area.center_latitude() - tc.lat);
+        const lng_diff = @abs(area.center_longitude() - tc.lng);
+        try std.testing.expect(lat_diff < 0.001);
+        try std.testing.expect(lng_diff < 0.001);
+    }
 }
 
-test "encode Tokyo" {
-    var buf: [20]u8 = undefined;
-    const len = try encode(35.6762, 139.6503, 10, &buf);
-    try std.testing.expectEqualStrings("8Q7XMMG2+F4", buf[0..len]);
-}
-
-test "is_valid" {
-    try std.testing.expect(is_valid("849VQHFJ+X6"));
-    try std.testing.expect(!is_valid(""));
-}
-
-test "is_full" {
-    try std.testing.expect(is_full("849VQHFJ+X6"));
-}
-
-test "decode roundtrip" {
-    var buf: [20]u8 = undefined;
-    const len = try encode(37.7749, -122.4194, 10, &buf);
-    const area = try decode(buf[0..len]);
-    try std.testing.expect(area.center_latitude() > 37.77);
-    try std.testing.expect(area.center_latitude() < 37.78);
-}
-
-test "encode Sydney" {
-    var buf: [20]u8 = undefined;
-    const len = try encode(-33.8688, 151.2093, 10, &buf);
-    try std.testing.expectEqualStrings("4RRH46J5+FP", buf[0..len]);
-}
-
-test "encode Moscow" {
-    var buf: [20]u8 = undefined;
-    const len = try encode(55.7558, 37.6173, 10, &buf);
-    try std.testing.expectEqualStrings("9G7VQJ48+8W", buf[0..len]);
-}
-
-test "encode Mexico City" {
-    var buf: [20]u8 = undefined;
-    const len = try encode(19.4326, -99.1332, 10, &buf);
-    try std.testing.expectEqualStrings("76F2CVM8+2P", buf[0..len]);
-}
-
-test "encode North Pole" {
+// Edge cases: poles, date line, extremes
+test "edge: north pole" {
     var buf: [20]u8 = undefined;
     const len = try encode(90.0, 0.0, 10, &buf);
-    // Should not panic at pole
     try std.testing.expect(len > 0);
+    const area = try decode(buf[0..len]);
+    try std.testing.expect(area.north_latitude <= 90.0);
 }
 
-test "encode South Pole" {
+test "edge: south pole" {
     var buf: [20]u8 = undefined;
     const len = try encode(-90.0, 0.0, 10, &buf);
     try std.testing.expect(len > 0);
+    const area = try decode(buf[0..len]);
+    try std.testing.expect(area.south_latitude >= -90.0);
 }
 
-test "encode date line positive" {
+test "edge: date line +180" {
     var buf: [20]u8 = undefined;
     const len = try encode(0.0, 180.0, 10, &buf);
     try std.testing.expect(len > 0);
 }
 
-test "encode date line negative" {
+test "edge: date line -180" {
     var buf: [20]u8 = undefined;
     const len = try encode(0.0, -180.0, 10, &buf);
     try std.testing.expect(len > 0);
 }
 
-test "encode origin" {
-    var buf: [20]u8 = undefined;
-    const len = try encode(0.0, 0.0, 10, &buf);
-    try std.testing.expectEqualStrings("6FG22222+22", buf[0..len]);
+test "edge: wrap longitude > 180" {
+    var buf1: [20]u8 = undefined;
+    var buf2: [20]u8 = undefined;
+    const len1 = try encode(0.0, 190.0, 10, &buf1);
+    const len2 = try encode(0.0, -170.0, 10, &buf2);
+    try std.testing.expectEqualStrings(buf2[0..len2], buf1[0..len1]);
 }
 
-test "short code length 4" {
+test "edge: wrap longitude < -180" {
+    var buf1: [20]u8 = undefined;
+    var buf2: [20]u8 = undefined;
+    const len1 = try encode(0.0, -190.0, 10, &buf1);
+    const len2 = try encode(0.0, 170.0, 10, &buf2);
+    try std.testing.expectEqualStrings(buf2[0..len2], buf1[0..len1]);
+}
+
+test "edge: clamp latitude > 90" {
+    var buf1: [20]u8 = undefined;
+    var buf2: [20]u8 = undefined;
+    const len1 = try encode(95.0, 0.0, 10, &buf1);
+    const len2 = try encode(90.0, 0.0, 10, &buf2);
+    try std.testing.expectEqualStrings(buf2[0..len2], buf1[0..len1]);
+}
+
+test "edge: clamp latitude < -90" {
+    var buf1: [20]u8 = undefined;
+    var buf2: [20]u8 = undefined;
+    const len1 = try encode(-95.0, 0.0, 10, &buf1);
+    const len2 = try encode(-90.0, 0.0, 10, &buf2);
+    try std.testing.expectEqualStrings(buf2[0..len2], buf1[0..len1]);
+}
+
+// Code length variations
+test "length: 4 digits (padded)" {
     var buf: [20]u8 = undefined;
     const len = try encode(37.7749, -122.4194, 4, &buf);
-    try std.testing.expect(len == 9); // 4 chars + 4 padding + separator
+    try std.testing.expect(len == 9);
+    try std.testing.expect(buf[4] == PADDING);
 }
 
-test "short code length 6" {
+test "length: 6 digits (padded)" {
     var buf: [20]u8 = undefined;
     const len = try encode(37.7749, -122.4194, 6, &buf);
-    try std.testing.expect(len == 9); // 6 chars + 2 padding + separator
+    try std.testing.expect(len == 9);
 }
 
-test "is_short detection" {
-    try std.testing.expect(!is_short("849VQHFJ+X6")); // full code
-    try std.testing.expect(is_short("QHFJ+X6")); // short code
-}
-
-test "invalid codes" {
-    try std.testing.expect(!is_valid(""));
-    try std.testing.expect(!is_valid("A")); // too short
-    try std.testing.expect(!is_valid("849VQHFJ++X6")); // double separator
-    try std.testing.expect(!is_valid("849+VQHFJ")); // separator in wrong position (odd)
-}
-
-test "decode center accuracy" {
+test "length: 8 digits (no refinement)" {
     var buf: [20]u8 = undefined;
+    const len = try encode(37.7749, -122.4194, 8, &buf);
+    try std.testing.expect(len == 9);
+    try std.testing.expect(buf[8] == SEPARATOR);
+}
+
+test "length: 11 digits (grid refinement)" {
+    var buf: [20]u8 = undefined;
+    const len = try encode(37.7749, -122.4194, 11, &buf);
+    try std.testing.expect(len == 12);
+}
+
+test "length: max 15 digits" {
+    var buf: [20]u8 = undefined;
+    const len = try encode(37.7749, -122.4194, 15, &buf);
+    try std.testing.expect(len == 16);
+}
+
+// Validation tests
+const valid_codes = [_][]const u8{
+    "6FG22222+22",
+    "849VQHFJ+X6",
+    "9C3XGV4C+XV",
+    "8FW4V75V+8QRXGVP",
+    "8FW40000+",
+    "8FW4+",
+};
+
+const invalid_codes = [_][]const u8{
+    "",
+    "A",
+    "849VQHFJ++X6",
+    "849+VQHFJ",
+    "O49VQHFJ+X6", // O not in alphabet
+    "I49VQHFJ+X6", // I not in alphabet
+    "L49VQHFJ+X6", // L not in alphabet
+    "A49VQHFJ+X6", // A not in alphabet
+};
+
+test "validate: valid codes" {
+    for (valid_codes) |code| {
+        try std.testing.expect(is_valid(code));
+    }
+}
+
+test "validate: invalid codes" {
+    for (invalid_codes) |code| {
+        try std.testing.expect(!is_valid(code));
+    }
+}
+
+test "validate: is_full" {
+    try std.testing.expect(is_full("849VQHFJ+X6"));
+    try std.testing.expect(is_full("6FG22222+22"));
+    try std.testing.expect(!is_full("QHFJ+X6"));
+    try std.testing.expect(!is_full("8FW4+"));
+}
+
+test "validate: is_short" {
+    try std.testing.expect(is_short("QHFJ+X6"));
+    try std.testing.expect(is_short("8FW4+"));
+    try std.testing.expect(!is_short("849VQHFJ+X6"));
+}
+
+// Buffer size tests
+test "buffer: too small returns error" {
+    var buf: [5]u8 = undefined;
+    const result = encode(37.7749, -122.4194, 10, &buf);
+    try std.testing.expectError(OlcError.BufferTooSmall, result);
+}
+
+test "buffer: exact size works" {
+    var buf: [11]u8 = undefined;
     const len = try encode(37.7749, -122.4194, 10, &buf);
-    const area = try decode(buf[0..len]);
+    try std.testing.expect(len == 11);
+}
 
-    // Center should be within ~0.0001 degrees of input
-    const lat_diff = @abs(area.center_latitude() - 37.7749);
-    const lng_diff = @abs(area.center_longitude() - (-122.4194));
+// Decode error tests
+test "decode: invalid code returns error" {
+    const result = decode("invalid");
+    try std.testing.expectError(OlcError.InvalidCode, result);
+}
 
-    try std.testing.expect(lat_diff < 0.001);
-    try std.testing.expect(lng_diff < 0.001);
+test "decode: short code returns error" {
+    const result = decode("QHFJ+X6");
+    try std.testing.expectError(OlcError.InvalidCode, result);
+}
+
+// CodeArea struct tests
+test "CodeArea: bounds make sense" {
+    const area = try decode("849VQHFJ+X6");
+    try std.testing.expect(area.south_latitude < area.north_latitude);
+    try std.testing.expect(area.west_longitude < area.east_longitude);
+    try std.testing.expect(area.code_length == 10);
+}
+
+test "CodeArea: center is within bounds" {
+    const area = try decode("849VQHFJ+X6");
+    const center_lat = area.center_latitude();
+    const center_lng = area.center_longitude();
+    try std.testing.expect(center_lat >= area.south_latitude);
+    try std.testing.expect(center_lat <= area.north_latitude);
+    try std.testing.expect(center_lng >= area.west_longitude);
+    try std.testing.expect(center_lng <= area.east_longitude);
+}
+
+// Precision tests
+test "precision: longer codes have smaller areas" {
+    const area8 = try decode("849VQHFJ+");
+    const area10 = try decode("849VQHFJ+X6");
+
+    const height8 = area8.north_latitude - area8.south_latitude;
+    const height10 = area10.north_latitude - area10.south_latitude;
+
+    try std.testing.expect(height10 < height8);
+}
+
+// Alphabet tests
+test "alphabet: all 20 characters are valid" {
+    for (CODE_ALPHABET) |c| {
+        const code = [_]u8{ '8', '4', '9', 'V', 'Q', 'H', 'F', 'J', '+', c, '6' };
+        try std.testing.expect(is_valid(&code));
+    }
+}
+
+test "alphabet: excluded characters are invalid" {
+    const excluded = "AILO";
+    for (excluded) |c| {
+        const code = [_]u8{ '8', '4', '9', 'V', 'Q', 'H', c, 'J', '+', 'X', '6' };
+        try std.testing.expect(!is_valid(&code));
+    }
+}
+
+// Fuzz test: random coordinates roundtrip
+test "fuzz: 100 random coordinates roundtrip" {
+    var prng = std.Random.DefaultPrng.init(0xDEADBEEF);
+    const random = prng.random();
+    var buf: [20]u8 = undefined;
+
+    for (0..100) |_| {
+        const lat = random.float(f64) * 180.0 - 90.0;
+        const lng = random.float(f64) * 360.0 - 180.0;
+
+        const len = try encode(lat, lng, 10, &buf);
+        const area = try decode(buf[0..len]);
+
+        // Decoded center should be within 0.001 degrees
+        const lat_diff = @abs(area.center_latitude() - lat);
+        const lng_diff = @abs(area.center_longitude() - lng);
+
+        try std.testing.expect(lat_diff < 0.001);
+        try std.testing.expect(lng_diff < 0.001);
+    }
+}
+
+// Fuzz test: all code lengths
+test "fuzz: all code lengths 2-15" {
+    var buf: [20]u8 = undefined;
+    const lat: f64 = 37.7749;
+    const lng: f64 = -122.4194;
+
+    var length: u8 = 2;
+    while (length <= 15) : (length += 1) {
+        const len = try encode(lat, lng, length, &buf);
+        try std.testing.expect(len > 0);
+
+        // Codes >= 8 digits should be decodable
+        if (length >= 8) {
+            const area = try decode(buf[0..len]);
+            try std.testing.expect(area.south_latitude < area.north_latitude);
+        }
+    }
 }
