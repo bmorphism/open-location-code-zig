@@ -1,0 +1,14 @@
+.{
+    .name = .open_location_code,
+    .version = "1.0.0",
+    .fingerprint = 0x77b4dc30b5c699d2,
+    .minimum_zig_version = "0.15.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src/open_location_code.zig",
+        "LICENSE",
+        "README.md",
+    },
+}
