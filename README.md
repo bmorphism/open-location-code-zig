@@ -16,8 +16,8 @@ Add to your `build.zig.zon`:
 ```zig
 .dependencies = .{
     .open_location_code = .{
-        .url = "https://github.com/bmorphism/open-location-code-zig/archive/refs/tags/v1.0.0.tar.gz",
-        .hash = "open_location_code-1.0.0-0pnGtZ5pAADexp2bUTRnLu90RwlaA1lxh7_pY5p2Zekh",
+        .url = "https://github.com/bmorphism/open-location-code-zig/archive/refs/tags/v1.1.0.tar.gz",
+        .hash = "open_location_code-1.0.0-0pnGtSekAABZrcQoWZaEGyrs23Ud7w41iXjqGdz7ZHRh",
     },
 },
 ```
