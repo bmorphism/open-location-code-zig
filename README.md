@@ -6,8 +6,8 @@ A pure Zig implementation of [Google's Open Location Code](https://github.com/go
 
 - **Pure Zig** - No dependencies, works with Zig 0.15+
 - **Zero allocations** - All encoding uses caller-provided buffers
-- **Fully tested** - 30 tests including table-driven reference cities, edge cases, and fuzz tests
-- **Complete API** - encode, decode, validate, full/short code detection
+- **Fully tested** - 35 tests including reference cities, edge cases, and fuzz tests
+- **Complete API** - encode, decode, shorten, recover, validate, full/short code detection
 
 ## Installation
 
@@ -88,6 +88,14 @@ Returns true if the code is a full (not shortened) Plus Code.
 ### `is_short(code: []const u8) bool`
 
 Returns true if the code is a shortened Plus Code.
+
+### `shorten(code: []const u8, ref_lat: f64, ref_lng: f64, buffer: []u8) !usize`
+
+Shortens a full Plus Code relative to a reference location. The closer the reference, the shorter the result.
+
+### `recover(short_code: []const u8, ref_lat: f64, ref_lng: f64, buffer: []u8) !usize`
+
+Recovers a full Plus Code from a short code and reference location.
 
 ## Examples
 

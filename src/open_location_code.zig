@@ -317,6 +317,130 @@ pub fn decode(code: []const u8) OlcError!CodeArea {
     };
 }
 
+/// Shortens a full Plus Code relative to a reference location.
+/// The reference should be within ~50km for 6-char codes, ~2.5km for 4-char.
+/// Returns the number of bytes written to the buffer.
+pub fn shorten(code: []const u8, ref_lat: f64, ref_lng: f64, buffer: []u8) OlcError!usize {
+    if (!is_full(code)) return OlcError.InvalidCode;
+
+    const area = try decode(code);
+    const center_lat = area.center_latitude();
+    const center_lng = area.center_longitude();
+
+    // Calculate distance in degrees
+    const lat_diff = @abs(ref_lat - center_lat);
+    const lng_diff = @abs(ref_lng - center_lng);
+    const range = @max(lat_diff, lng_diff);
+
+    // Determine how much we can shorten
+    var removal: usize = 0;
+    if (range < 0.000625) { // ~50m
+        removal = 8;
+    } else if (range < 0.0125) { // ~1km
+        removal = 6;
+    } else if (range < 0.25) { // ~20km
+        removal = 4;
+    } else if (range < 5.0) { // ~400km
+        removal = 2;
+    }
+
+    if (removal == 0) {
+        // Can't shorten, copy original
+        if (buffer.len < code.len) return OlcError.BufferTooSmall;
+        @memcpy(buffer[0..code.len], code);
+        return code.len;
+    }
+
+    // Find separator position
+    var sep_idx: usize = 0;
+    for (code, 0..) |c, i| {
+        if (c == SEPARATOR) {
+            sep_idx = i;
+            break;
+        }
+    }
+
+    // Copy shortened code (skip first 'removal' chars)
+    const short_len = code.len - removal;
+    if (buffer.len < short_len) return OlcError.BufferTooSmall;
+
+    var dst: usize = 0;
+    var src: usize = removal;
+    while (src < code.len) : (src += 1) {
+        buffer[dst] = code[src];
+        dst += 1;
+    }
+
+    return short_len;
+}
+
+/// Recovers a full Plus Code from a short code and reference location.
+/// Returns the number of bytes written to the buffer.
+pub fn recover(short_code: []const u8, ref_lat: f64, ref_lng: f64, buffer: []u8) OlcError!usize {
+    if (!is_short(short_code)) {
+        // Already full, just copy
+        if (buffer.len < short_code.len) return OlcError.BufferTooSmall;
+        @memcpy(buffer[0..short_code.len], short_code);
+        return short_code.len;
+    }
+
+    // Find separator position
+    var sep_idx: usize = 0;
+    for (short_code, 0..) |c, i| {
+        if (c == SEPARATOR) {
+            sep_idx = i;
+            break;
+        }
+    }
+
+    // Encode reference location to get prefix
+    var ref_buf: [20]u8 = undefined;
+    const ref_len = try encode(ref_lat, ref_lng, 10, &ref_buf);
+    _ = ref_len;
+
+    // Number of characters to take from reference
+    const prefix_len = SEPARATOR_POSITION - sep_idx;
+    const full_len = prefix_len + short_code.len;
+    if (buffer.len < full_len) return OlcError.BufferTooSmall;
+
+    // Copy prefix from reference
+    @memcpy(buffer[0..prefix_len], ref_buf[0..prefix_len]);
+    // Copy short code
+    @memcpy(buffer[prefix_len..full_len], short_code);
+
+    // Decode and check if it's close to reference
+    const area = try decode(buffer[0..full_len]);
+    const center_lat = area.center_latitude();
+    const center_lng = area.center_longitude();
+
+    // Adjust if needed (shift by resolution)
+    const res = codeLen2Res(prefix_len);
+    var adj_lat = center_lat;
+    var adj_lng = center_lng;
+
+    if (center_lat - ref_lat > res / 2) {
+        adj_lat -= res;
+    } else if (ref_lat - center_lat > res / 2) {
+        adj_lat += res;
+    }
+
+    if (center_lng - ref_lng > res / 2) {
+        adj_lng -= res;
+    } else if (ref_lng - center_lng > res / 2) {
+        adj_lng += res;
+    }
+
+    // Re-encode if adjusted
+    if (adj_lat != center_lat or adj_lng != center_lng) {
+        var adj_buf: [20]u8 = undefined;
+        const adj_len = try encode(adj_lat, adj_lng, 10, &adj_buf);
+        @memcpy(buffer[0..prefix_len], adj_buf[0..prefix_len]);
+        _ = adj_len;
+    }
+
+    return full_len;
+}
+
 // =============================================================================
 // Internal Helpers
 // =============================================================================
@@ -347,6 +471,17 @@ fn charVal(c: u8) u8 {
         if (c == a) return @intCast(i);
     }
     return 0;
+}
+
+fn codeLen2Res(len: usize) f64 {
+    // Resolution in degrees for a given prefix length
+    return switch (len) {
+        2 => 20.0,
+        4 => 1.0,
+        6 => 0.05,
+        8 => 0.0025,
+        else => 20.0,
+    };
 }
 
 // =============================================================================
@@ -644,4 +779,59 @@ test "fuzz: all code lengths 2-15" {
             try std.testing.expect(area.south_latitude < area.north_latitude);
         }
     }
+}
+
+// Shorten/Recover tests
+test "shorten: close reference shortens to 4 chars" {
+    var buf: [20]u8 = undefined;
+    // San Francisco code with very close reference
+    const len = try shorten("849VQHFJ+X6", 37.775, -122.419, &buf);
+    try std.testing.expect(len < 11); // Should be shortened
+    try std.testing.expect(is_short(buf[0..len]));
+}
+
+test "shorten: far reference keeps full code" {
+    var buf: [20]u8 = undefined;
+    // San Francisco code with distant reference (New York)
+    const len = try shorten("849VQHFJ+X6", 40.7128, -74.0060, &buf);
+    try std.testing.expectEqualStrings("849VQHFJ+X6", buf[0..len]);
+}
+
+test "recover: short code recovers to full" {
+    var buf: [20]u8 = undefined;
+    // Short code for SF with nearby reference
+    const len = try recover("QHFJ+X6", 37.775, -122.419, &buf);
+    try std.testing.expect(is_full(buf[0..len]));
+    // Should decode to somewhere near SF
+    const area = try decode(buf[0..len]);
+    try std.testing.expect(area.center_latitude() > 37.0);
+    try std.testing.expect(area.center_latitude() < 38.0);
+}
+
+test "recover: full code unchanged" {
+    var buf: [20]u8 = undefined;
+    const len = try recover("849VQHFJ+X6", 0.0, 0.0, &buf);
+    try std.testing.expectEqualStrings("849VQHFJ+X6", buf[0..len]);
+}
+
+test "shorten/recover: roundtrip" {
+    const original = "849VQHFJ+X6";
+    const ref_lat: f64 = 37.775;
+    const ref_lng: f64 = -122.419;
+
+    var short_buf: [20]u8 = undefined;
+    const short_len = try shorten(original, ref_lat, ref_lng, &short_buf);
+
+    var recovered_buf: [20]u8 = undefined;
+    const recovered_len = try recover(short_buf[0..short_len], ref_lat, ref_lng, &recovered_buf);
+
+    // Decoded centers should be very close
+    const orig_area = try decode(original);
+    const recov_area = try decode(recovered_buf[0..recovered_len]);
+
+    const lat_diff = @abs(orig_area.center_latitude() - recov_area.center_latitude());
+    const lng_diff = @abs(orig_area.center_longitude() - recov_area.center_longitude());
+
+    try std.testing.expect(lat_diff < 0.01);
+    try std.testing.expect(lng_diff < 0.01);
 }
